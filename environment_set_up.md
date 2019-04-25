@@ -151,25 +151,8 @@
 > > If you meet error on the last command.Don't worry.
 >
 > ```shell
-> # clone my project
-> $ git clone https://github.com/SherLzp/Hyperledger-Pilot.git
-> # download docker images
-> $ cd Hyperledger-Pilot
-> # run the script
-> $ chmod +x pull_fabric_images.sh
-> $ ./pull_fabric_images.sh
-> # check the docker images
-> $ docker images
-> hyperledger/fabric-ca                                                                                  1.4.1               3a1799cda5d7        8 days ago          252MB
-> hyperledger/fabric-tools                                                                               1.4.1               432c24764fbb        8 days ago          1.55GB
-> hyperledger/fabric-ccenv                                                                               1.4.1               d7433c4b2a1c        8 days ago          1.43GB
-> hyperledger/fabric-orderer                                                                             1.4.1               ec4ca236d3d4        8 days ago          173MB
-> hyperledger/fabric-peer                                                                                1.4.1               a1e3874f338b        8 days ago          178MB
-> hyperledger/fabric-javaenv                                                                             1.4.1               b8c9d7ff6243        8 days ago          1.74GB
-> hyperledger/fabric-zookeeper                                                                           0.4.15              20c6045930c8        4 weeks ago         1.43GB
-> hyperledger/fabric-kafka                                                                               0.4.15              b4ab82bbaf2f        4 weeks ago         1.44GB
-> hyperledger/fabric-couchdb                                                                             0.4.15              8de128a55539        4 weeks ago         1.5GB
-> hyperledger/fabric-baseos                                                                              amd64-0.4.15        9d6ec11c60ff        4 weeks ago         145MB
+> #use the following command
+> $ curl -sSL https://raw.githubusercontent.com/hyperledger/fabric/master/scripts/bootstrap.sh | bash -s 1.4.1 1.4.1 0.4.15
 > ```
 >
 > - **Set global access**
