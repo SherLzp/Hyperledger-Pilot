@@ -13,18 +13,19 @@
  *  See the License for the specific language governing permissions and
  *  limitations under the License.
  */
+var path = require('path');
+var fs = require('fs');
 var util = require('util');
+var hfc = require('fabric-client');
 var helper = require('./helper.js');
 var logger = helper.getLogger('Query');
 
 var queryChaincode = async function(peer, channelName, chaincodeName, args, fcn, username, org_name) {
-	let client = null;
-	let channel = null;
 	try {
 		// first setup the client for this org
-		client = await helper.getClientForOrg(org_name, username);
+		var client = await helper.getClientForOrg(org_name, username);
 		logger.debug('Successfully got the fabric client for the organization "%s"', org_name);
-		channel = client.getChannel(channelName);
+		var channel = client.getChannel(channelName);
 		if(!channel) {
 			let message = util.format('Channel %s was not defined in the connection profile', channelName);
 			logger.error(message);
@@ -53,10 +54,6 @@ var queryChaincode = async function(peer, channelName, chaincodeName, args, fcn,
 	} catch(error) {
 		logger.error('Failed to query due to error: ' + error.stack ? error.stack : error);
 		return error.toString();
-	} finally {
-		if (channel) {
-			channel.close();
-		}
 	}
 };
 var getBlockByNumber = async function(peer, channelName, blockNumber, username, org_name) {
@@ -121,7 +118,7 @@ var getBlockByHash = async function(peer, channelName, hash, username, org_name)
 			throw new Error(message);
 		}
 
-		let response_payload = await channel.queryBlockByHash(Buffer.from(hash,'hex'), peer);
+		let response_payload = await channel.queryBlockByHash(Buffer.from(hash), peer);
 		if (response_payload) {
 			logger.debug(response_payload);
 			return response_payload;

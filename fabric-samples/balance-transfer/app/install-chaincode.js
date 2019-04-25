@@ -14,9 +14,13 @@
  *  limitations under the License.
  */
 'use strict';
+var path = require('path');
+var fs = require('fs');
 var util = require('util');
+var config = require('../config.json');
 var helper = require('./helper.js');
 var logger = helper.getLogger('install-chaincode');
+var tx_id = null;
 
 var installChaincode = async function(peers, chaincodeName, chaincodePath,
 	chaincodeVersion, chaincodeType, username, org_name) {
@@ -30,6 +34,7 @@ var installChaincode = async function(peers, chaincodeName, chaincodePath,
 		var client = await helper.getClientForOrg(org_name, username);
 		logger.debug('Successfully got the fabric client for the organization "%s"', org_name);
 
+		tx_id = client.newTransactionID(true); //get an admin transactionID
 		var request = {
 			targets: peers,
 			chaincodePath: chaincodePath,
@@ -47,17 +52,23 @@ var installChaincode = async function(peers, chaincodeName, chaincodePath,
 		// lets have a look at the responses to see if they are
 		// all good, if good they will also include signatures
 		// required to be committed
-		for (const i in proposalResponses) {
-			if (proposalResponses[i] instanceof Error) {
-				error_message = util.format('install proposal resulted in an error :: %s', proposalResponses[i].toString());
-				logger.error(error_message);
-			} else if (proposalResponses[i].response && proposalResponses[i].response.status === 200) {
+		var all_good = true;
+		for (var i in proposalResponses) {
+			let one_good = false;
+			if (proposalResponses && proposalResponses[i].response &&
+				proposalResponses[i].response.status === 200) {
+				one_good = true;
 				logger.info('install proposal was good');
 			} else {
-				all_good = false;
-				error_message = util.format('install proposal was bad for an unknown reason %j', proposalResponses[i]);
-				logger.error(error_message);
+				logger.error('install proposal was bad %j',proposalResponses.toJSON());
 			}
+			all_good = all_good & one_good;
+		}
+		if (all_good) {
+			logger.info('Successfully sent install Proposal and received ProposalResponse');
+		} else {
+			error_message = 'Failed to send install Proposal or receive valid response. Response null or status is not 200'
+			logger.error(error_message);
 		}
 	} catch(error) {
 		logger.error('Failed to install due to error: ' + error.stack ? error.stack : error);
@@ -65,10 +76,10 @@ var installChaincode = async function(peers, chaincodeName, chaincodePath,
 	}
 
 	if (!error_message) {
-		let message = util.format('Successfully installed chaincode');
+		let message = util.format('Successfully install chaincode');
 		logger.info(message);
 		// build a response to send back to the REST caller
-		const response = {
+		let response = {
 			success: true,
 			message: message
 		};
@@ -76,11 +87,7 @@ var installChaincode = async function(peers, chaincodeName, chaincodePath,
 	} else {
 		let message = util.format('Failed to install due to:%s',error_message);
 		logger.error(message);
-		const response = {
-			success: false,
-			message: message
-		};
-		return response;
+		throw new Error(message);
 	}
 };
 exports.installChaincode = installChaincode;

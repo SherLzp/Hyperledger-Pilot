@@ -6,28 +6,18 @@ SPDX-License-Identifier: Apache-2.0
 
 // ====CHAINCODE EXECUTION SAMPLES (CLI) ==================
 
-// ==== Invoke marbles, pass private data as base64 encoded bytes in transient map ====
-//
-// export MARBLE=$(echo -n "{\"name\":\"marble1\",\"color\":\"blue\",\"size\":35,\"owner\":\"tom\",\"price\":99}" | base64)
-// peer chaincode invoke -C mychannel -n marblesp -c '{"Args":["initMarble"]}' --transient "{\"marble\":\"$MARBLE\"}"
-//
-// export MARBLE=$(echo -n "{\"name\":\"marble2\",\"color\":\"red\",\"size\":50,\"owner\":\"tom\",\"price\":102}" | base64)
-// peer chaincode invoke -C mychannel -n marblesp -c '{"Args":["initMarble"]}' --transient "{\"marble\":\"$MARBLE\"}"
-//
-// export MARBLE=$(echo -n "{\"name\":\"marble3\",\"color\":\"blue\",\"size\":70,\"owner\":\"tom\",\"price\":103}" | base64)
-// peer chaincode invoke -C mychannel -n marblesp -c '{"Args":["initMarble"]}' --transient "{\"marble\":\"$MARBLE\"}"
-//
-// export MARBLE_OWNER=$(echo -n "{\"name\":\"marble2\",\"owner\":\"jerry\"}" | base64)
-// peer chaincode invoke -C mychannel -n marblesp -c '{"Args":["transferMarble"]}' --transient "{\"marble_owner\":\"$MARBLE_OWNER\"}"
-//
-// export MARBLE_DELETE=$(echo -n "{\"name\":\"marble1\"}" | base64)
-// peer chaincode invoke -C mychannel -n marblesp -c '{"Args":["delete"]}' --transient "{\"marble_delete\":\"$MARBLE_DELETE\"}"
+// ==== Invoke marbles ====
+// peer chaincode invoke -C mychannel -n marblesp -c '{"Args":["initMarble","marble1","blue","35","tom","99"]}'
+// peer chaincode invoke -C mychannel -n marblesp -c '{"Args":["initMarble","marble2","red","50","tom","102"]}'
+// peer chaincode invoke -C mychannel -n marblesp -c '{"Args":["initMarble","marble3","blue","70","tom","103"]}'
+// peer chaincode invoke -C mychannel -n marblesp -c '{"Args":["transferMarble","marble2","jerry"]}'
+// peer chaincode invoke -C mychannel -n marblesp -c '{"Args":["delete","marble1"]}'
 
-// ==== Query marbles, since queries are not recorded on chain we don't need to hide private data in transient map ====
+// ==== Query marbles ====
 // peer chaincode query -C mychannel -n marblesp -c '{"Args":["readMarble","marble1"]}'
 // peer chaincode query -C mychannel -n marblesp -c '{"Args":["readMarblePrivateDetails","marble1"]}'
-// peer chaincode query -C mychannel -n marblesp -c '{"Args":["getMarblesByRange","marble1","marble4"]}'
-//
+// peer chaincode query -C mychannel -n marblesp -c '{"Args":["getMarblesByRange","marble1","marble3"]}'
+
 // Rich Query (Only supported if CouchDB is used as state database):
 //   peer chaincode query -C mychannel -n marblesp -c '{"Args":["queryMarblesByOwner","tom"]}'
 //   peer chaincode query -C mychannel -n marblesp -c '{"Args":["queryMarbles","{\"selector\":{\"owner\":\"tom\"}}"]}'
@@ -94,6 +84,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/hyperledger/fabric/core/chaincode/shim"
@@ -154,6 +145,9 @@ func (t *SimpleChaincode) Invoke(stub shim.ChaincodeStubInterface) pb.Response {
 	case "transferMarble":
 		//change owner of a specific marble
 		return t.transferMarble(stub, args)
+	case "transferMarblesBasedOnColor":
+		//transfer all marbles of a certain color
+		return t.transferMarblesBasedOnColor(stub, args)
 	case "delete":
 		//delete a marble
 		return t.delete(stub, args)
@@ -179,95 +173,75 @@ func (t *SimpleChaincode) Invoke(stub shim.ChaincodeStubInterface) pb.Response {
 func (t *SimpleChaincode) initMarble(stub shim.ChaincodeStubInterface, args []string) pb.Response {
 	var err error
 
-	type marbleTransientInput struct {
-		Name  string `json:"name"` //the fieldtags are needed to keep case from bouncing around
-		Color string `json:"color"`
-		Size  int    `json:"size"`
-		Owner string `json:"owner"`
-		Price int    `json:"price"`
+	//  0-name  1-color  2-size  3-owner  4-price
+	// "asdf",  "blue",  "35",   "bob",   "99"
+	if len(args) != 5 {
+		return shim.Error("Incorrect number of arguments. Expecting 5")
 	}
 
 	// ==== Input sanitation ====
 	fmt.Println("- start init marble")
-
-	if len(args) != 0 {
-		return shim.Error("Incorrect number of arguments. Private marble data must be passed in transient map.")
+	if len(args[0]) == 0 {
+		return shim.Error("1st argument must be a non-empty string")
 	}
-
-	transMap, err := stub.GetTransient()
+	if len(args[1]) == 0 {
+		return shim.Error("2nd argument must be a non-empty string")
+	}
+	if len(args[2]) == 0 {
+		return shim.Error("3rd argument must be a non-empty string")
+	}
+	if len(args[3]) == 0 {
+		return shim.Error("4th argument must be a non-empty string")
+	}
+	if len(args[4]) == 0 {
+		return shim.Error("5th argument must be a non-empty string")
+	}
+	marbleName := args[0]
+	color := strings.ToLower(args[1])
+	owner := strings.ToLower(args[3])
+	size, err := strconv.Atoi(args[2])
 	if err != nil {
-		return shim.Error("Error getting transient: " + err.Error())
+		return shim.Error("3rd argument must be a numeric string")
 	}
-
-	if _, ok := transMap["marble"]; !ok {
-		return shim.Error("marble must be a key in the transient map")
-	}
-
-	if len(transMap["marble"]) == 0 {
-		return shim.Error("marble value in the transient map must be a non-empty JSON string")
-	}
-
-	var marbleInput marbleTransientInput
-	err = json.Unmarshal(transMap["marble"], &marbleInput)
+	price, err := strconv.Atoi(args[4])
 	if err != nil {
-		return shim.Error("Failed to decode JSON of: " + string(transMap["marble"]))
-	}
-
-	if len(marbleInput.Name) == 0 {
-		return shim.Error("name field must be a non-empty string")
-	}
-	if len(marbleInput.Color) == 0 {
-		return shim.Error("color field must be a non-empty string")
-	}
-	if marbleInput.Size <= 0 {
-		return shim.Error("size field must be a positive integer")
-	}
-	if len(marbleInput.Owner) == 0 {
-		return shim.Error("owner field must be a non-empty string")
-	}
-	if marbleInput.Price <= 0 {
-		return shim.Error("price field must be a positive integer")
+		return shim.Error("5th argument must be a numeric string")
 	}
 
 	// ==== Check if marble already exists ====
-	marbleAsBytes, err := stub.GetPrivateData("collectionMarbles", marbleInput.Name)
+	marbleAsBytes, err := stub.GetPrivateData("collectionMarbles", marbleName)
 	if err != nil {
 		return shim.Error("Failed to get marble: " + err.Error())
 	} else if marbleAsBytes != nil {
-		fmt.Println("This marble already exists: " + marbleInput.Name)
-		return shim.Error("This marble already exists: " + marbleInput.Name)
+		fmt.Println("This marble already exists: " + marbleName)
+		return shim.Error("This marble already exists: " + marbleName)
 	}
 
-	// ==== Create marble object, marshal to JSON, and save to state ====
-	marble := &marble{
-		ObjectType: "marble",
-		Name:       marbleInput.Name,
-		Color:      marbleInput.Color,
-		Size:       marbleInput.Size,
-		Owner:      marbleInput.Owner,
-	}
+	// ==== Create marble object and marshal to JSON ====
+	objectType := "marble"
+	marble := &marble{objectType, marbleName, color, size, owner}
 	marbleJSONasBytes, err := json.Marshal(marble)
 	if err != nil {
 		return shim.Error(err.Error())
 	}
+	//Alternatively, build the marble json string manually if you don't want to use struct marshalling
+	//marbleJSONasString := `{"docType":"Marble",  "name": "` + marbleName + `", "color": "` + color + `", "size": ` + strconv.Itoa(size) + `, "owner": "` + owner + `"}`
+	//marbleJSONasBytes := []byte(str)
 
 	// === Save marble to state ===
-	err = stub.PutPrivateData("collectionMarbles", marbleInput.Name, marbleJSONasBytes)
+	err = stub.PutPrivateData("collectionMarbles", marbleName, marbleJSONasBytes)
 	if err != nil {
 		return shim.Error(err.Error())
 	}
 
-	// ==== Create marble private details object with price, marshal to JSON, and save to state ====
-	marblePrivateDetails := &marblePrivateDetails{
-		ObjectType: "marblePrivateDetails",
-		Name:       marbleInput.Name,
-		Price:      marbleInput.Price,
-	}
+	// ==== Save marble private details ====
+	objectType = "marblePrivateDetails"
+	marblePrivateDetails := &marblePrivateDetails{objectType, marbleName, price}
 	marblePrivateDetailsBytes, err := json.Marshal(marblePrivateDetails)
 	if err != nil {
 		return shim.Error(err.Error())
 	}
-	err = stub.PutPrivateData("collectionMarblePrivateDetails", marbleInput.Name, marblePrivateDetailsBytes)
+	err = stub.PutPrivateData("collectionMarblePrivateDetails", marbleName, marblePrivateDetailsBytes)
 	if err != nil {
 		return shim.Error(err.Error())
 	}
@@ -344,72 +318,49 @@ func (t *SimpleChaincode) readMarblePrivateDetails(stub shim.ChaincodeStubInterf
 // delete - remove a marble key/value pair from state
 // ==================================================
 func (t *SimpleChaincode) delete(stub shim.ChaincodeStubInterface, args []string) pb.Response {
-	fmt.Println("- start delete marble")
-
-	type marbleDeleteTransientInput struct {
-		Name string `json:"name"`
+	var jsonResp string
+	var marbleJSON marble
+	if len(args) != 1 {
+		return shim.Error("Incorrect number of arguments. Expecting 1")
 	}
-
-	if len(args) != 0 {
-		return shim.Error("Incorrect number of arguments. Private marble name must be passed in transient map.")
-	}
-
-	transMap, err := stub.GetTransient()
-	if err != nil {
-		return shim.Error("Error getting transient: " + err.Error())
-	}
-
-	if _, ok := transMap["marble_delete"]; !ok {
-		return shim.Error("marble_delete must be a key in the transient map")
-	}
-
-	if len(transMap["marble_delete"]) == 0 {
-		return shim.Error("marble_delete value in the transient map must be a non-empty JSON string")
-	}
-
-	var marbleDeleteInput marbleDeleteTransientInput
-	err = json.Unmarshal(transMap["marble_delete"], &marbleDeleteInput)
-	if err != nil {
-		return shim.Error("Failed to decode JSON of: " + string(transMap["marble_delete"]))
-	}
-
-	if len(marbleDeleteInput.Name) == 0 {
-		return shim.Error("name field must be a non-empty string")
-	}
+	marbleName := args[0]
 
 	// to maintain the color~name index, we need to read the marble first and get its color
-	valAsbytes, err := stub.GetPrivateData("collectionMarbles", marbleDeleteInput.Name) //get the marble from chaincode state
+	valAsbytes, err := stub.GetPrivateData("collectionMarbles", marbleName) //get the marble from chaincode state
 	if err != nil {
-		return shim.Error("Failed to get state for " + marbleDeleteInput.Name)
+		jsonResp = "{\"Error\":\"Failed to get state for " + marbleName + "\"}"
+		return shim.Error(jsonResp)
 	} else if valAsbytes == nil {
-		return shim.Error("Marble does not exist: " + marbleDeleteInput.Name)
+		jsonResp = "{\"Error\":\"Marble does not exist: " + marbleName + "\"}"
+		return shim.Error(jsonResp)
 	}
 
-	var marbleToDelete marble
-	err = json.Unmarshal([]byte(valAsbytes), &marbleToDelete)
+	err = json.Unmarshal([]byte(valAsbytes), &marbleJSON)
 	if err != nil {
-		return shim.Error("Failed to decode JSON of: " + string(valAsbytes))
+		jsonResp = "{\"Error\":\"Failed to decode JSON of: " + marbleName + "\"}"
+		return shim.Error(jsonResp)
 	}
 
-	// delete the marble from state
-	err = stub.DelPrivateData("collectionMarbles", marbleDeleteInput.Name)
+	err = stub.DelPrivateData("collectionMarbles", marbleName) //remove the marble from chaincode state
 	if err != nil {
 		return shim.Error("Failed to delete state:" + err.Error())
 	}
 
-	// Also delete the marble from the color~name index
+	// maintain the index
 	indexName := "color~name"
-	colorNameIndexKey, err := stub.CreateCompositeKey(indexName, []string{marbleToDelete.Color, marbleToDelete.Name})
+	colorNameIndexKey, err := stub.CreateCompositeKey(indexName, []string{marbleJSON.Color, marbleJSON.Name})
 	if err != nil {
 		return shim.Error(err.Error())
 	}
+
+	//  Delete index entry to state.
 	err = stub.DelPrivateData("collectionMarbles", colorNameIndexKey)
 	if err != nil {
 		return shim.Error("Failed to delete state:" + err.Error())
 	}
 
-	// Finally, delete private details of marble
-	err = stub.DelPrivateData("collectionMarblePrivateDetails", marbleDeleteInput.Name)
+	//  Delete private details of marble
+	err = stub.DelPrivateData("collectionMarblePrivateDetails", marbleName)
 	if err != nil {
 		return shim.Error(err.Error())
 	}
@@ -422,48 +373,21 @@ func (t *SimpleChaincode) delete(stub shim.ChaincodeStubInterface, args []string
 // ===========================================================
 func (t *SimpleChaincode) transferMarble(stub shim.ChaincodeStubInterface, args []string) pb.Response {
 
-	fmt.Println("- start transfer marble")
-
-	type marbleTransferTransientInput struct {
-		Name  string `json:"name"`
-		Owner string `json:"owner"`
+	//   0       1
+	// "name", "bob"
+	if len(args) < 2 {
+		return shim.Error("Incorrect number of arguments. Expecting 2")
 	}
 
-	if len(args) != 0 {
-		return shim.Error("Incorrect number of arguments. Private marble data must be passed in transient map.")
-	}
+	marbleName := args[0]
+	newOwner := strings.ToLower(args[1])
+	fmt.Println("- start transferMarble ", marbleName, newOwner)
 
-	transMap, err := stub.GetTransient()
-	if err != nil {
-		return shim.Error("Error getting transient: " + err.Error())
-	}
-
-	if _, ok := transMap["marble_owner"]; !ok {
-		return shim.Error("marble_owner must be a key in the transient map")
-	}
-
-	if len(transMap["marble_owner"]) == 0 {
-		return shim.Error("marble_owner value in the transient map must be a non-empty JSON string")
-	}
-
-	var marbleTransferInput marbleTransferTransientInput
-	err = json.Unmarshal(transMap["marble_owner"], &marbleTransferInput)
-	if err != nil {
-		return shim.Error("Failed to decode JSON of: " + string(transMap["marble_owner"]))
-	}
-
-	if len(marbleTransferInput.Name) == 0 {
-		return shim.Error("name field must be a non-empty string")
-	}
-	if len(marbleTransferInput.Owner) == 0 {
-		return shim.Error("owner field must be a non-empty string")
-	}
-
-	marbleAsBytes, err := stub.GetPrivateData("collectionMarbles", marbleTransferInput.Name)
+	marbleAsBytes, err := stub.GetPrivateData("collectionMarbles", marbleName)
 	if err != nil {
 		return shim.Error("Failed to get marble:" + err.Error())
 	} else if marbleAsBytes == nil {
-		return shim.Error("Marble does not exist: " + marbleTransferInput.Name)
+		return shim.Error("Marble does not exist")
 	}
 
 	marbleToTransfer := marble{}
@@ -471,10 +395,10 @@ func (t *SimpleChaincode) transferMarble(stub shim.ChaincodeStubInterface, args 
 	if err != nil {
 		return shim.Error(err.Error())
 	}
-	marbleToTransfer.Owner = marbleTransferInput.Owner //change the owner
+	marbleToTransfer.Owner = newOwner //change the owner
 
 	marbleJSONasBytes, _ := json.Marshal(marbleToTransfer)
-	err = stub.PutPrivateData("collectionMarbles", marbleToTransfer.Name, marbleJSONasBytes) //rewrite the marble
+	err = stub.PutPrivateData("collectionMarbles", marbleName, marbleJSONasBytes) //rewrite the marble
 	if err != nil {
 		return shim.Error(err.Error())
 	}
@@ -539,6 +463,66 @@ func (t *SimpleChaincode) getMarblesByRange(stub shim.ChaincodeStubInterface, ar
 	fmt.Printf("- getMarblesByRange queryResult:\n%s\n", buffer.String())
 
 	return shim.Success(buffer.Bytes())
+}
+
+// ==== Example: GetStateByPartialCompositeKey/RangeQuery =========================================
+// transferMarblesBasedOnColor will transfer marbles of a given color to a certain new owner.
+// Uses a GetStateByPartialCompositeKey (range query) against color~name 'index'.
+// Committing peers will re-execute range queries to guarantee that result sets are stable
+// between endorsement time and commit time. The transaction is invalidated by the
+// committing peers if the result set has changed between endorsement time and commit time.
+// Therefore, range queries are a safe option for performing update transactions based on query results.
+// ===========================================================================================
+func (t *SimpleChaincode) transferMarblesBasedOnColor(stub shim.ChaincodeStubInterface, args []string) pb.Response {
+
+	//   0       1
+	// "color", "bob"
+	if len(args) < 2 {
+		return shim.Error("Incorrect number of arguments. Expecting 2")
+	}
+
+	color := args[0]
+	newOwner := strings.ToLower(args[1])
+	fmt.Println("- start transferMarblesBasedOnColor ", color, newOwner)
+
+	// Query the color~name index by color
+	// This will execute a key range query on all keys starting with 'color'
+	coloredMarbleResultsIterator, err := stub.GetPrivateDataByPartialCompositeKey("collectionMarbles", "color~name", []string{color})
+	if err != nil {
+		return shim.Error(err.Error())
+	}
+	defer coloredMarbleResultsIterator.Close()
+
+	// Iterate through result set and for each marble found, transfer to newOwner
+	var i int
+	for i = 0; coloredMarbleResultsIterator.HasNext(); i++ {
+		// Note that we don't get the value (2nd return variable), we'll just get the marble name from the composite key
+		responseRange, err := coloredMarbleResultsIterator.Next()
+		if err != nil {
+			return shim.Error(err.Error())
+		}
+
+		// get the color and name from color~name composite key
+		objectType, compositeKeyParts, err := stub.SplitCompositeKey(responseRange.Key)
+		if err != nil {
+			return shim.Error(err.Error())
+		}
+		returnedColor := compositeKeyParts[0]
+		returnedMarbleName := compositeKeyParts[1]
+		fmt.Printf("- found a marble from index:%s color:%s name:%s\n", objectType, returnedColor, returnedMarbleName)
+
+		// Now call the transfer function for the found marble.
+		// Re-use the same function that is used to transfer individual marbles
+		response := t.transferMarble(stub, []string{returnedMarbleName, newOwner})
+		// if the transfer failed break out of loop and return error
+		if response.Status != shim.OK {
+			return shim.Error("Transfer failed: " + response.Message)
+		}
+	}
+
+	responsePayload := fmt.Sprintf("Transferred %d %s marbles to %s", i, color, newOwner)
+	fmt.Println("- end transferMarblesBasedOnColor: " + responsePayload)
+	return shim.Success([]byte(responsePayload))
 }
 
 // =======Rich queries =========================================================================

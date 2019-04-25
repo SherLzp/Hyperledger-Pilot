@@ -13,6 +13,7 @@
  *  See the License for the specific language governing permissions and
  *  limitations under the License.
  */
+var util = require('util');
 var fs = require('fs');
 var path = require('path');
 
@@ -45,32 +46,19 @@ var createChannel = async function(channelName, channelConfigPath, username, org
 		};
 
 		// send to orderer
-		const result = await client.createChannel(request)
-		logger.debug(' result ::%j', result);
-		if (result) {
-			if (result.status === 'SUCCESS') {
-				logger.debug('Successfully created the channel.');
-				const response = {
-					success: true,
-					message: 'Channel \'' + channelName + '\' created Successfully'
-				};
-				return response;
-			} else {
-				logger.error('Failed to create the channel. status:' + result.status + ' reason:' + result.info);
-				const response = {
-					success: false,
-					message: 'Channel \'' + channelName + '\' failed to create status:' + result.status + ' reason:' + result.info
-				};
-				return response;
-			}
+		var response = await client.createChannel(request)
+		logger.debug(' response ::%j', response);
+		if (response && response.status === 'SUCCESS') {
+			logger.debug('Successfully created the channel.');
+			let response = {
+				success: true,
+				message: 'Channel \'' + channelName + '\' created Successfully'
+			};
+			return response;
 		} else {
 			logger.error('\n!!!!!!!!! Failed to create the channel \'' + channelName +
 				'\' !!!!!!!!!\n\n');
-			const response = {
-				success: false,
-				message: 'Failed to create the channel \'' + channelName + '\'',
-			};
-			return response;
+			throw new Error('Failed to create the channel \'' + channelName + '\'');
 		}
 	} catch (err) {
 		logger.error('Failed to initialize the channel: ' + err.stack ? err.stack :	err);

@@ -4,10 +4,31 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 #
+
 # exit on first error
 
 export BASE_FOLDER=$WORKSPACE/gopath/src/github.com/hyperledger
+export PROJECT_VERSION=1.2.0-stable
+export NEXUS_URL=nexus3.hyperledger.org:10001
 export ORG_NAME="hyperledger/fabric"
+export NODE_VER=8.9.4 # Default nodejs version
+
+# Fetch baseimage version
+curl -L https://raw.githubusercontent.com/hyperledger/fabric/master/Makefile > Makefile
+export BASE_IMAGE_VER=`cat Makefile | grep BASEIMAGE_RELEASE= | cut -d "=" -f2`
+echo "-----------> BASE_IMAGE_VER" $BASE_IMAGE_VER
+export OS_VER=$(dpkg --print-architecture)
+echo "-----------> OS_VER" $OS_VER
+export BASE_IMAGE_TAG=$OS_VER-$BASE_IMAGE_VER
+
+# Fetch Go Version from fabric ci.properties file
+curl -L https://raw.githubusercontent.com/hyperledger/fabric/master/ci.properties > ci.properties
+export GO_VER=`cat ci.properties | grep GO_VER | cut -d "=" -f 2`
+echo "-----------> GO_VER" $GO_VER
+
+# Published stable version from nexus
+export STABLE_TAG=$OS_VER-$PROJECT_VERSION
+echo "-----------> STABLE_TAG" $STABLE_TAG
 
 Parse_Arguments() {
       while [ $# -gt 0 ]; do
@@ -15,20 +36,20 @@ Parse_Arguments() {
                       --env_Info)
                             env_Info
                             ;;
-                      --pull_Docker_Images)
-                            pull_Docker_Images
+                      --SetGopath)
+                            setGopath
                             ;;
-                      --pull_Fabric_CA_Images)
-                            pull_Fabric_CA_Images
+                      --pull_Fabric_Images)
+                            pull_Fabric_Images
+                            ;;
+                      --pull_Fabric_CA_Image)
+                            pull_Fabric_CA_Image
                             ;;
                       --clean_Environment)
                             clean_Environment
                             ;;
-                      --byfn_eyfn_Tests)
+		      --byfn_eyfn_Tests)
                             byfn_eyfn_Tests
-                            ;;
-                      --fabcar_Tests)
-                            fabcar_Tests
                             ;;
                       --pull_Thirdparty_Images)
                             pull_Thirdparty_Images
@@ -52,17 +73,22 @@ function clearContainers () {
 }
 
 function removeUnwantedImages() {
-  for i in $(docker images | grep none | awk '{print $3}'); do
-    docker rmi ${i} || true
-  done
+        DOCKER_IMAGES_SNAPSHOTS=$(docker images | grep snapshot | grep -v grep | awk '{print $1":" $2}')
 
-  for i in $(docker images | grep -vE ".*baseimage.*(0.4.13|0.4.14)" | grep -vE ".*baseos.*(0.4.13|0.4.14)" | grep -vE ".*couchdb.*(0.4.13|0.4.14)" | grep -vE ".*zoo.*(0.4.13|0.4.14)" | grep -vE ".*kafka.*(0.4.13|0.4.14)" | grep -v "REPOSITORY" | awk '{print $1":" $2}'); do
-    docker rmi ${i} || true
-  done
+        if [ -z "$DOCKER_IMAGES_SNAPSHOTS" ] || [ "$DOCKER_IMAGES_SNAPSHOTS" = " " ]; then
+                echo "---- No snapshot images available for deletion ----"
+        else
+	        docker rmi -f $DOCKER_IMAGES_SNAPSHOTS || true
+	fi
+        DOCKER_IMAGE_IDS=$(docker images | grep -v 'base*\|couchdb\|kafka\|zookeeper\|cello' | awk '{print $3}')
+
+        if [ -z "$DOCKER_IMAGE_IDS" ] || [ "$DOCKER_IMAGE_IDS" = " " ]; then
+                echo "---- No images available for deletion ----"
+        else
+                docker rmi -f $DOCKER_IMAGE_IDS || true
+                docker images
+        fi
 }
-
-# Remove /tmp/fabric-shim
-docker run -v /tmp:/tmp library/alpine rm -rf /tmp/fabric-shim || true
 
 # remove tmp/hfc and hfc-key-store data
 rm -rf /home/jenkins/.nvm /home/jenkins/npm /tmp/fabric-shim /tmp/hfc* /tmp/npm* /home/jenkins/kvsTemp /home/jenkins/.hfc-key-store
@@ -91,53 +117,63 @@ env_Info() {
 	docker info
 	docker-compose version
 	pgrep -a docker
+	docker images
+	docker ps -a
 }
 
-# Pull Thirdparty Docker images (kafka, couchdb, zookeeper baseos)
+setGopath() {
+        echo "-----------> set GOPATH"
+	echo
+	export GOPATH=$WORKSPACE/gopath
+	export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-amd64
+        export PATH=$GOROOT/bin:$GOPATH/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin:~/npm/bin:/home/jenkins/.nvm/versions/node/v6.9.5/bin:/home/jenkins/.nvm/versions/node/v$NODE_VER/bin:$PATH
+        export GOROOT=/opt/go/go$GO_VER.linux.$OS_VER
+	export PATH=$GOROOT/bin:$PATH
+}
+# Pull Thirdparty Docker images (Kafka, couchdb, zookeeper)
 pull_Thirdparty_Images() {
-            echo "------> BASE_IMAGE_TAG:" $BASE_IMAGE_TAG
-            for IMAGES in kafka couchdb zookeeper baseos; do
-                 echo "-----------> Pull $IMAGES image"
+            for IMAGES in kafka couchdb zookeeper; do
+                 echo "-----------> Pull $IMAGE image"
                  echo
-                 docker pull $ORG_NAME-$IMAGES:${BASE_IMAGE_TAG} > /dev/null 2>&1
-                 if [ $? -ne 0 ]; then
-                       echo -e "\033[31m FAILED to pull docker images" "\033[0m"
-                       exit 1
-                 fi
-                 docker tag $ORG_NAME-$IMAGES:${BASE_IMAGE_TAG} $ORG_NAME-$IMAGES
-                 docker tag $ORG_NAME-$IMAGES:${BASE_IMAGE_TAG} $ORG_NAME-$IMAGES:$VERSION
+                 docker pull $ORG_NAME-$IMAGES:$BASE_IMAGE_TAG
+                 docker tag $ORG_NAME-$IMAGES:$BASE_IMAGE_TAG $ORG_NAME-$IMAGES
             done
                  echo
                  docker images | grep hyperledger/fabric
 }
-# pull Docker images from nexus
-pull_Docker_Images() {
-            for IMAGES in ca peer orderer tools ccenv; do
+# pull fabric images from nexus
+pull_Fabric_Images() {
+        setGopath fabric # set gopath
+            for IMAGES in peer orderer tools ccenv; do
                  echo "-----------> pull $IMAGES image"
                  echo
-                 docker pull $ORG_NAME-$IMAGES:$VERSION > /dev/null 2>&1
-                 if [ $? -ne 0 ]; then
-                       echo -e "\033[31m FAILED to pull docker images" "\033[0m"
-                       exit 1
-                 fi
-                 docker tag $ORG_NAME-$IMAGES:$VERSION $ORG_NAME-$IMAGES
+                 docker pull $NEXUS_URL/$ORG_NAME-$IMAGES:$STABLE_TAG
+                 docker tag $NEXUS_URL/$ORG_NAME-$IMAGES:$STABLE_TAG $ORG_NAME-$IMAGES
+                 docker tag $NEXUS_URL/$ORG_NAME-$IMAGES:$STABLE_TAG $ORG_NAME-$IMAGES:$STABLE_TAG
+                 docker rmi -f $NEXUS_URL/$ORG_NAME-$IMAGES:$STABLE_TAG
             done
                  echo
                  docker images | grep hyperledger/fabric
 }
-
+# pull fabric-ca images from nexus
+pull_Fabric_CA_Image() {
+	echo
+        setGopath fabric-ca
+            for IMAGES in ca ca-peer ca-orderer ca-tools; do
+                 echo "-----------> pull $IMAGES image"
+                 echo
+                 docker pull $NEXUS_URL/$ORG_NAME-$IMAGES:$STABLE_TAG
+                 docker tag $NEXUS_URL/$ORG_NAME-$IMAGES:$STABLE_TAG $ORG_NAME-$IMAGES
+	         docker tag $NEXUS_URL/$ORG_NAME-$IMAGES:$STABLE_TAG $ORG_NAME-$IMAGES:$STABLE_TAG
+                 docker rmi -f $NEXUS_URL/$ORG_NAME-$IMAGES:$STABLE_TAG
+            done
+                 echo
+                 docker images | grep hyperledger/fabric-ca
+}
 # run byfn,eyfn tests
 byfn_eyfn_Tests() {
-                 echo
-                 echo "-----------> Execute Byfn and Eyfn Tests"
-                 ./byfn_eyfn.sh
-}
-# run fabcar tests
-fabcar_Tests() {
-                 echo
-                 echo "npm version ------> $(npm -v)"
-                 echo "node version ------> $(node -v)"
-                 echo "-----------> Execute FabCar Tests"
-                 ./fabcar.sh
+	echo
+	echo "-----------> Execute Byfn and Eyfn Tests"
+	./byfn_eyfn.sh
 }
 Parse_Arguments $@
