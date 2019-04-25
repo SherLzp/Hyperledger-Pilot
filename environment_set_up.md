@@ -175,7 +175,7 @@
 > - **Set global access**
 >
 > ```shell
-> $ cd first-samples/bin/
+> $ cd fabric-samples/bin/
 > $ cp * /usr/bin/
 > ```
 
